@@ -27,11 +27,13 @@ import {
   findRefreshToken,
   findUserByEmail,
   findUserById,
+  findUserByOAuthAccount,
   insertEmailVerificationToken,
   insertPasswordResetToken,
   insertRefreshToken,
   invalidateEmailVerificationTokensForUser,
   invalidatePasswordResetTokensForUser,
+  linkOAuthAccount,
   markEmailVerificationTokenUsed,
   markPasswordResetTokenUsed,
   openDb,
@@ -40,6 +42,7 @@ import {
   setEmailVerified,
   updatePasswordHash,
 } from "./db.js";
+import { PROVIDERS, buildAuthorizationUrl, getOAuthIdentity, resolveProvider } from "./lib/oauth.js";
 import { hashPassword, verifyPassword } from "./lib/passwords.js";
 import { expiresAt, generateToken, hashToken, isExpired } from "./lib/tokens.js";
 import { normalizeEmail, validateEmail, validatePassword } from "./lib/validation.js";
@@ -286,9 +289,85 @@ function handleVerifyEmail(db, body) {
   return { message: "Email verified." };
 }
 
+/** Looks up a provider by name in config.oauthProviders (credentials
+ * only) and merges it with lib/oauth.js's preset when there is one.
+ * A name with no preset (e.g. "mock", used by the test suite and the
+ * self-hosted-provider demo in the README) must supply its own
+ * endpoints + mapProfile since there's no preset to merge with. */
+function resolveConfiguredProvider(config, name) {
+  const credentials = config.oauthProviders?.[name];
+  if (!credentials) return null;
+  if (PROVIDERS[name]) return resolveProvider(name, credentials);
+  if (!credentials.authorizationUrl || !credentials.tokenUrl || !credentials.userInfoUrl || !credentials.mapProfile) {
+    throw new Error(`OAuth provider "${name}" has no preset and is missing required endpoint config.`);
+  }
+  return credentials;
+}
+
+/** A short-lived, stateless anti-CSRF state parameter: rather than
+ * keeping a server-side table of "states we issued" (which wouldn't
+ * survive a restart and wouldn't work behind a load balancer without
+ * shared storage), the state itself is a signed, expiring token --
+ * verifying it needs nothing but the JWT secret this process already
+ * has. */
+function createOAuthState(config) {
+  return signJwt({ purpose: "oauth-state" }, config.jwtSecret, { expiresInSeconds: 600 });
+}
+
+function isValidOAuthState(config, state) {
+  if (typeof state !== "string") return false;
+  const payload = verifyJwt(state, config.jwtSecret);
+  return Boolean(payload && payload.purpose === "oauth-state");
+}
+
+function handleOAuthAuthorize(config, res, providerName) {
+  const provider = resolveConfiguredProvider(config, providerName);
+  if (!provider) throw new HttpError(404, `OAuth provider "${providerName}" is not configured.`);
+  const state = createOAuthState(config);
+  res.writeHead(302, { Location: buildAuthorizationUrl(provider, { state }) });
+  res.end();
+}
+
+async function handleOAuthCallback(db, config, res, providerName, searchParams) {
+  const provider = resolveConfiguredProvider(config, providerName);
+  if (!provider) throw new HttpError(404, `OAuth provider "${providerName}" is not configured.`);
+  if (!isValidOAuthState(config, searchParams.get("state"))) {
+    throw new HttpError(400, "Invalid or expired OAuth state.");
+  }
+  const code = searchParams.get("code");
+  if (!code) throw new HttpError(400, "Missing authorization code.");
+
+  const identity = await getOAuthIdentity(provider, code);
+
+  let user = findUserByOAuthAccount(db, providerName, identity.providerAccountId);
+  if (!user) {
+    // The provider has already verified this email on their end, and
+    // an existing local account with the same address is treated as
+    // the same person -- sign in with Google using the address you
+    // already registered with a password links the two rather than
+    // creating a second, disconnected account.
+    user = identity.email ? findUserByEmail(db, normalizeEmail(identity.email)) : null;
+    if (!user) {
+      user = createUser(db, { email: normalizeEmail(identity.email), passwordHash: null });
+    }
+    if (!user.emailVerified) setEmailVerified(db, user.id);
+    linkOAuthAccount(db, { userId: user.id, provider: providerName, providerAccountId: identity.providerAccountId });
+  }
+
+  const tokens = issueTokenPair(db, user, config);
+  // Tokens travel in the URL fragment, not the query string: a
+  // fragment is never sent to the server (by this redirect or a
+  // subsequent one) and never forwarded in a Referer header, unlike a
+  // query parameter would be. The page at oauthSuccessRedirect reads
+  // it client-side (see public/oauth-callback.html).
+  const fragment = new URLSearchParams({ access_token: tokens.accessToken, refresh_token: tokens.refreshToken });
+  res.writeHead(302, { Location: `${config.oauthSuccessRedirect}#${fragment.toString()}` });
+  res.end();
+}
+
 // ---- router ----
 
-async function handleApiRequest(db, config, req, res, segments) {
+async function handleApiRequest(db, config, req, res, segments, url) {
   if (segments[1] === "auth" && segments[2] === "register" && segments.length === 3 && req.method === "POST") {
     const body = await readJsonBody(req);
     return sendJson(res, 201, await handleRegister(db, config, body));
@@ -346,6 +425,20 @@ async function handleApiRequest(db, config, req, res, segments) {
     return sendJson(res, 200, handleVerifyEmail(db, body));
   }
 
+  if (segments[1] === "auth" && segments[2] === "oauth" && segments.length === 4 && req.method === "GET") {
+    return handleOAuthAuthorize(config, res, segments[3]);
+  }
+
+  if (
+    segments[1] === "auth" &&
+    segments[2] === "oauth" &&
+    segments[4] === "callback" &&
+    segments.length === 5 &&
+    req.method === "GET"
+  ) {
+    return handleOAuthCallback(db, config, res, segments[3], url.searchParams);
+  }
+
   if (segments[1] === "me" && segments.length === 2 && req.method === "GET") {
     const user = requireUser(req, db, config);
     return sendJson(res, 200, { user: publicUser(user) });
@@ -381,6 +474,8 @@ export function createServer(options) {
     emailVerificationTtlSeconds: options.emailVerificationTtlSeconds ?? DEFAULT_EMAIL_VERIFICATION_TTL_SECONDS,
     sendPasswordResetEmail: options.sendPasswordResetEmail ?? defaultSendPasswordResetEmail,
     sendVerificationEmail: options.sendVerificationEmail ?? defaultSendVerificationEmail,
+    oauthProviders: options.oauthProviders ?? {},
+    oauthSuccessRedirect: options.oauthSuccessRedirect ?? "/oauth-callback.html",
   };
   if (typeof config.jwtSecret !== "string" || config.jwtSecret.length === 0) {
     throw new Error("createServer requires a non-empty jwtSecret.");
@@ -393,7 +488,7 @@ export function createServer(options) {
     const segments = url.pathname.split("/").filter(Boolean);
 
     if (segments[0] === "api") {
-      handleApiRequest(db, config, req, res, segments).catch((err) => {
+      handleApiRequest(db, config, req, res, segments, url).catch((err) => {
         if (err instanceof HttpError) sendJson(res, err.status, { error: err.message });
         else sendJson(res, 500, { error: "Internal server error." });
       });
@@ -412,6 +507,24 @@ export function createServer(options) {
   return server;
 }
 
+/** Reads FOO_CLIENT_ID/FOO_CLIENT_SECRET/FOO_REDIRECT_URI for each
+ * known preset out of env vars, and includes a provider only when all
+ * three are set -- an unconfigured provider's /oauth/:name route
+ * 404s rather than the server refusing to start over it. */
+function oauthProvidersFromEnv(env) {
+  const providers = {};
+  for (const name of Object.keys(PROVIDERS)) {
+    const prefix = name.toUpperCase();
+    const clientId = env[`${prefix}_CLIENT_ID`];
+    const clientSecret = env[`${prefix}_CLIENT_SECRET`];
+    const redirectUri = env[`${prefix}_REDIRECT_URI`];
+    if (clientId && clientSecret && redirectUri) {
+      providers[name] = { clientId, clientSecret, redirectUri };
+    }
+  }
+  return providers;
+}
+
 const isMainModule = process.argv[1] && import.meta.url === `file://${process.argv[1]}`;
 if (isMainModule) {
   if (!process.env.JWT_SECRET) {
@@ -426,6 +539,7 @@ if (isMainModule) {
     refreshTokenTtlSeconds: process.env.REFRESH_TOKEN_TTL_SECONDS
       ? Number(process.env.REFRESH_TOKEN_TTL_SECONDS)
       : undefined,
+    oauthProviders: oauthProvidersFromEnv(process.env),
   });
   const port = process.env.PORT || 3000;
   server.listen(port, () => {
