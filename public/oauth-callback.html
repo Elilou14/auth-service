@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Connexion...</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <main class="content">
+    <p id="status" class="flash">Connexion en cours...</p>
+  </main>
+
+  <script>
+    // The server hands tokens back in the URL *fragment*, not the
+    // query string, specifically so they never reach a server log or
+    // a Referer header -- this page's only job is to move them from
+    // that fragment into the same localStorage key script.js reads,
+    // then get out of the URL entirely (redirect, not just hide it).
+    const STORAGE_KEY = "auth-service-demo:tokens";
+    const params = new URLSearchParams(window.location.hash.slice(1));
+    const accessToken = params.get("access_token");
+    const refreshToken = params.get("refresh_token");
+
+    if (accessToken && refreshToken) {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify({ accessToken, refreshToken }));
+      window.location.replace("/index.html#profile");
+    } else {
+      document.getElementById("status").textContent = "Echec de la connexion. Retour a l'accueil...";
+      document.getElementById("status").className = "flash error";
+      setTimeout(() => window.location.replace("/index.html#login"), 2000);
+    }
+  </script>
+</body>
+</html>

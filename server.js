@@ -65,10 +65,10 @@ const DEFAULT_EMAIL_VERIFICATION_TTL_SECONDS = 24 * 60 * 60; // 24 hours
  * (the reset/verification token is a credential -- it must never
  * travel back over the same channel that requested it). */
 function defaultSendPasswordResetEmail(user, rawToken) {
-  console.log(`[dev] Password reset link for ${user.email}: /reset-password?token=${rawToken}`);
+  console.log(`[dev] Password reset link for ${user.email}: /?token=${rawToken}#reset-password`);
 }
 function defaultSendVerificationEmail(user, rawToken) {
-  console.log(`[dev] Email verification link for ${user.email}: /verify-email?token=${rawToken}`);
+  console.log(`[dev] Email verification link for ${user.email}: /?token=${rawToken}#verify-email`);
 }
 
 // A fixed, validly-formatted (but useless) hash to run login's

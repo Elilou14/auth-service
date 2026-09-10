@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Auth Service</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header class="topbar">
+    <h1>Auth Service</h1>
+    <nav class="topnav">
+      <a href="#login" data-nav="login">Connexion</a>
+      <a href="#register" data-nav="register">Inscription</a>
+      <a href="#profile" data-nav="profile" hidden>Profil</a>
+      <button id="logout-btn" type="button" class="link-btn" hidden>Deconnexion</button>
+    </nav>
+  </header>
+
+  <main class="content">
+    <p id="flash" class="flash" role="status" hidden></p>
+
+    <section data-view="login" class="card">
+      <h2>Connexion</h2>
+      <form id="login-form">
+        <label>Email <input type="email" name="email" required autocomplete="email" /></label>
+        <label>Mot de passe <input type="password" name="password" required autocomplete="current-password" /></label>
+        <button type="submit">Se connecter</button>
+      </form>
+      <p class="hint"><a href="#forgot-password">Mot de passe oublie ?</a></p>
+      <p class="hint">Pas de compte ? <a href="#register">S'inscrire</a></p>
+      <p class="hint">
+        <a href="/api/auth/oauth/github" class="oauth-btn">Se connecter avec GitHub</a>
+      </p>
+    </section>
+
+    <section data-view="register" class="card" hidden>
+      <h2>Inscription</h2>
+      <form id="register-form">
+        <label>Email <input type="email" name="email" required autocomplete="email" /></label>
+        <label>
+          Mot de passe
+          <input type="password" name="password" required autocomplete="new-password" minlength="8" />
+        </label>
+        <p class="hint">8 caracteres minimum, au moins une lettre et un chiffre.</p>
+        <button type="submit">Creer mon compte</button>
+      </form>
+    </section>
+
+    <section data-view="forgot-password" class="card" hidden>
+      <h2>Mot de passe oublie</h2>
+      <form id="forgot-password-form">
+        <label>Email <input type="email" name="email" required autocomplete="email" /></label>
+        <button type="submit">Envoyer le lien de reinitialisation</button>
+      </form>
+      <p class="hint">
+        Pas d'envoi d'email reel dans cette demo -- le lien est affiche ici et dans les logs du serveur.
+      </p>
+    </section>
+
+    <section data-view="reset-password" class="card" hidden>
+      <h2>Reinitialiser le mot de passe</h2>
+      <form id="reset-password-form">
+        <input type="hidden" name="token" />
+        <label>
+          Nouveau mot de passe
+          <input type="password" name="newPassword" required autocomplete="new-password" minlength="8" />
+        </label>
+        <button type="submit">Reinitialiser</button>
+      </form>
+    </section>
+
+    <section data-view="verify-email" class="card" hidden>
+      <h2>Verification de l'email</h2>
+      <p id="verify-email-status">Verification en cours...</p>
+    </section>
+
+    <section data-view="profile" class="card" hidden>
+      <h2>Profil</h2>
+      <dl class="profile-details">
+        <dt>Email</dt>
+        <dd id="profile-email"></dd>
+        <dt>Email verifie</dt>
+        <dd id="profile-verified"></dd>
+        <dt>Compte cree le</dt>
+        <dd id="profile-created"></dd>
+      </dl>
+      <button id="resend-verification-btn" type="button" hidden>Renvoyer l'email de verification</button>
+    </section>
+  </main>
+
+  <script type="module" src="script.js"></script>
+</body>
+</html>

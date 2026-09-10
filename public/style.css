@@ -1,0 +1,204 @@
+:root {
+  --bg: #0f172a;
+  --card: #1e293b;
+  --text: #f1f5f9;
+  --muted: #94a3b8;
+  --accent: #6366f1;
+  --accent-hover: #4f46e5;
+  --border: #334155;
+  --danger: #f87171;
+  --success: #34d399;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  background: var(--bg);
+  color: var(--text);
+  font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+}
+
+.topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  padding: 1rem 1.5rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.topbar h1 {
+  margin: 0;
+  font-size: 1.25rem;
+}
+
+.topnav {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+
+.topnav a {
+  color: var(--muted);
+  text-decoration: none;
+  font-size: 0.9rem;
+}
+
+.topnav a:hover {
+  color: var(--text);
+}
+
+.link-btn {
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  font-size: 0.9rem;
+  cursor: pointer;
+  padding: 0;
+}
+
+.link-btn:hover {
+  color: var(--text);
+}
+
+.content {
+  max-width: 420px;
+  margin: 2rem auto;
+  padding: 0 1.25rem;
+}
+
+.flash {
+  margin: 0 0 1rem;
+  padding: 0.6rem 0.9rem;
+  border-radius: 8px;
+  font-size: 0.85rem;
+  background: rgba(99, 102, 241, 0.15);
+  border: 1px solid var(--accent);
+  color: var(--text);
+}
+
+.flash.error {
+  background: rgba(248, 113, 113, 0.15);
+  border-color: var(--danger);
+}
+
+.flash.success {
+  background: rgba(52, 211, 153, 0.15);
+  border-color: var(--success);
+}
+
+.card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 1.5rem;
+}
+
+.card h2 {
+  margin: 0 0 1.1rem;
+  font-size: 1.1rem;
+}
+
+form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+}
+
+label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
+input {
+  padding: 0.6rem 0.7rem;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+  font-size: 0.9rem;
+}
+
+input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+button[type="submit"],
+.oauth-btn {
+  margin-top: 0.25rem;
+  padding: 0.65rem;
+  border: none;
+  border-radius: 8px;
+  background: var(--accent);
+  color: white;
+  font-size: 0.9rem;
+  font-weight: 600;
+  text-align: center;
+  text-decoration: none;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+button[type="submit"]:hover,
+.oauth-btn:hover {
+  background: var(--accent-hover);
+}
+
+.oauth-btn {
+  display: block;
+  background: #24292f;
+}
+
+.oauth-btn:hover {
+  background: #32383f;
+}
+
+.hint {
+  margin: 0.9rem 0 0;
+  font-size: 0.8rem;
+  color: var(--muted);
+  text-align: center;
+}
+
+.hint a {
+  color: var(--accent);
+}
+
+.profile-details {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 0.4rem 1rem;
+  margin: 0 0 1.25rem;
+  font-size: 0.9rem;
+}
+
+.profile-details dt {
+  color: var(--muted);
+}
+
+.profile-details dd {
+  margin: 0;
+}
+
+#resend-verification-btn {
+  padding: 0.5rem 0.8rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text);
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+
+#resend-verification-btn:hover {
+  border-color: var(--accent);
+}
