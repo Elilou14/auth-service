@@ -527,6 +527,12 @@ function oauthProvidersFromEnv(env) {
 
 const isMainModule = process.argv[1] && import.meta.url === `file://${process.argv[1]}`;
 if (isMainModule) {
+  try {
+    process.loadEnvFile();
+  } catch {
+    // .env is optional -- production can set real env vars directly.
+  }
+
   if (!process.env.JWT_SECRET) {
     throw new Error("JWT_SECRET environment variable is required (see .env.example).");
   }
