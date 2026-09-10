@@ -1,0 +1,12 @@
+{
+  "name": "auth-service",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "A reusable authentication brick: register/login, JWT access + refresh tokens, password reset, email verification, OAuth2 -- zero runtime dependencies.",
+  "scripts": {
+    "test": "node --test",
+    "start": "node server.js"
+  },
+  "license": "MIT"
+}
