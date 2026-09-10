@@ -22,13 +22,23 @@ import { fileURLToPath } from "node:url";
 
 import {
   createUser,
+  findEmailVerificationToken,
+  findPasswordResetToken,
   findRefreshToken,
   findUserByEmail,
   findUserById,
+  insertEmailVerificationToken,
+  insertPasswordResetToken,
   insertRefreshToken,
+  invalidateEmailVerificationTokensForUser,
+  invalidatePasswordResetTokensForUser,
+  markEmailVerificationTokenUsed,
+  markPasswordResetTokenUsed,
   openDb,
   revokeAllRefreshTokensForUser,
   revokeRefreshToken,
+  setEmailVerified,
+  updatePasswordHash,
 } from "./db.js";
 import { hashPassword, verifyPassword } from "./lib/passwords.js";
 import { expiresAt, generateToken, hashToken, isExpired } from "./lib/tokens.js";
@@ -40,6 +50,23 @@ const PUBLIC_DIR = path.join(__dirname, "public");
 
 const DEFAULT_ACCESS_TOKEN_TTL_SECONDS = 15 * 60; // 15 minutes
 const DEFAULT_REFRESH_TOKEN_TTL_SECONDS = 30 * 24 * 60 * 60; // 30 days
+const DEFAULT_PASSWORD_RESET_TTL_SECONDS = 60 * 60; // 1 hour
+const DEFAULT_EMAIL_VERIFICATION_TTL_SECONDS = 24 * 60 * 60; // 24 hours
+
+/** Sending real email is a deployment concern, not this brick's --
+ * these default stubs just log the link a real implementation would
+ * email. A caller wires up a real mailer (SES, SendGrid, nodemailer,
+ * ...) by passing sendPasswordResetEmail/sendVerificationEmail to
+ * createServer(); tests pass a spy to capture the token without
+ * needing either a real mailer or a backdoor in the HTTP response
+ * (the reset/verification token is a credential -- it must never
+ * travel back over the same channel that requested it). */
+function defaultSendPasswordResetEmail(user, rawToken) {
+  console.log(`[dev] Password reset link for ${user.email}: /reset-password?token=${rawToken}`);
+}
+function defaultSendVerificationEmail(user, rawToken) {
+  console.log(`[dev] Email verification link for ${user.email}: /verify-email?token=${rawToken}`);
+}
 
 // A fixed, validly-formatted (but useless) hash to run login's
 // password check against when the email isn't registered, so
@@ -121,8 +148,20 @@ async function handleRegister(db, config, body) {
 
   const passwordHash = await hashPassword(body.password);
   const user = createUser(db, { email, passwordHash });
+  sendVerificationEmail(db, config, user);
   const tokens = issueTokenPair(db, user, config);
   return { user: publicUser(user), ...tokens };
+}
+
+function sendVerificationEmail(db, config, user) {
+  invalidateEmailVerificationTokensForUser(db, user.id);
+  const rawToken = generateToken();
+  insertEmailVerificationToken(db, {
+    userId: user.id,
+    tokenHash: hashToken(rawToken),
+    expiresAt: expiresAt(config.emailVerificationTtlSeconds),
+  });
+  config.sendVerificationEmail(user, rawToken);
 }
 
 async function handleLogin(db, config, body) {
@@ -175,6 +214,78 @@ function handleLogout(db, body) {
   // logging out is idempotent from the caller's point of view.
 }
 
+const GENERIC_FORGOT_PASSWORD_MESSAGE = "If that email is registered, a password reset link has been sent.";
+
+function handleForgotPassword(db, config, body) {
+  const emailCheck = validateEmail(body.email);
+  if (!emailCheck.valid) throw new HttpError(400, emailCheck.reason);
+
+  // Same response whether or not the account exists -- confirming a
+  // negative here is exactly the enumeration a generic message on
+  // /login is also trying to prevent.
+  const user = findUserByEmail(db, normalizeEmail(body.email));
+  if (user) {
+    invalidatePasswordResetTokensForUser(db, user.id);
+    const rawToken = generateToken();
+    insertPasswordResetToken(db, {
+      userId: user.id,
+      tokenHash: hashToken(rawToken),
+      expiresAt: expiresAt(config.passwordResetTtlSeconds),
+    });
+    config.sendPasswordResetEmail(user, rawToken);
+  }
+  return { message: GENERIC_FORGOT_PASSWORD_MESSAGE };
+}
+
+async function handleResetPassword(db, body) {
+  if (typeof body.token !== "string" || !body.token) throw new HttpError(400, "token is required.");
+  const passwordCheck = validatePassword(body.newPassword);
+  if (!passwordCheck.valid) throw new HttpError(400, passwordCheck.reason);
+
+  const stored = findPasswordResetToken(db, hashToken(body.token));
+  // One generic error for not-found, already-used and expired alike --
+  // distinguishing them tells an attacker holding a guessed/stale
+  // token more than they should learn from a single response.
+  if (!stored || stored.used || isExpired(stored.expiresAt)) {
+    throw new HttpError(400, "This reset link is invalid or has expired.");
+  }
+
+  const passwordHash = await hashPassword(body.newPassword);
+  updatePasswordHash(db, stored.userId, passwordHash);
+  markPasswordResetTokenUsed(db, hashToken(body.token));
+  // A password reset is a "this session may have been compromised"
+  // event -- force every device to log in again with the new password.
+  revokeAllRefreshTokensForUser(db, stored.userId);
+
+  return { message: "Password has been reset. Please log in again." };
+}
+
+const GENERIC_RESEND_VERIFICATION_MESSAGE = "If that email is registered and unverified, a verification link has been sent.";
+
+function handleResendVerification(db, config, body) {
+  const emailCheck = validateEmail(body.email);
+  if (!emailCheck.valid) throw new HttpError(400, emailCheck.reason);
+
+  const user = findUserByEmail(db, normalizeEmail(body.email));
+  if (user && !user.emailVerified) {
+    sendVerificationEmail(db, config, user);
+  }
+  return { message: GENERIC_RESEND_VERIFICATION_MESSAGE };
+}
+
+function handleVerifyEmail(db, body) {
+  if (typeof body.token !== "string" || !body.token) throw new HttpError(400, "token is required.");
+
+  const stored = findEmailVerificationToken(db, hashToken(body.token));
+  if (!stored || stored.used || isExpired(stored.expiresAt)) {
+    throw new HttpError(400, "This verification link is invalid or has expired.");
+  }
+
+  setEmailVerified(db, stored.userId);
+  markEmailVerificationTokenUsed(db, hashToken(body.token));
+  return { message: "Email verified." };
+}
+
 // ---- router ----
 
 async function handleApiRequest(db, config, req, res, segments) {
@@ -198,6 +309,41 @@ async function handleApiRequest(db, config, req, res, segments) {
     handleLogout(db, body);
     res.writeHead(204);
     return res.end();
+  }
+
+  if (
+    segments[1] === "auth" &&
+    segments[2] === "forgot-password" &&
+    segments.length === 3 &&
+    req.method === "POST"
+  ) {
+    const body = await readJsonBody(req);
+    return sendJson(res, 200, handleForgotPassword(db, config, body));
+  }
+
+  if (
+    segments[1] === "auth" &&
+    segments[2] === "reset-password" &&
+    segments.length === 3 &&
+    req.method === "POST"
+  ) {
+    const body = await readJsonBody(req);
+    return sendJson(res, 200, await handleResetPassword(db, body));
+  }
+
+  if (
+    segments[1] === "auth" &&
+    segments[2] === "resend-verification" &&
+    segments.length === 3 &&
+    req.method === "POST"
+  ) {
+    const body = await readJsonBody(req);
+    return sendJson(res, 200, handleResendVerification(db, config, body));
+  }
+
+  if (segments[1] === "auth" && segments[2] === "verify-email" && segments.length === 3 && req.method === "POST") {
+    const body = await readJsonBody(req);
+    return sendJson(res, 200, handleVerifyEmail(db, body));
   }
 
   if (segments[1] === "me" && segments.length === 2 && req.method === "GET") {
@@ -231,6 +377,10 @@ export function createServer(options) {
     jwtSecret: options.jwtSecret,
     accessTokenTtlSeconds: options.accessTokenTtlSeconds ?? DEFAULT_ACCESS_TOKEN_TTL_SECONDS,
     refreshTokenTtlSeconds: options.refreshTokenTtlSeconds ?? DEFAULT_REFRESH_TOKEN_TTL_SECONDS,
+    passwordResetTtlSeconds: options.passwordResetTtlSeconds ?? DEFAULT_PASSWORD_RESET_TTL_SECONDS,
+    emailVerificationTtlSeconds: options.emailVerificationTtlSeconds ?? DEFAULT_EMAIL_VERIFICATION_TTL_SECONDS,
+    sendPasswordResetEmail: options.sendPasswordResetEmail ?? defaultSendPasswordResetEmail,
+    sendVerificationEmail: options.sendVerificationEmail ?? defaultSendVerificationEmail,
   };
   if (typeof config.jwtSecret !== "string" || config.jwtSecret.length === 0) {
     throw new Error("createServer requires a non-empty jwtSecret.");
